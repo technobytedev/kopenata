@@ -17,6 +17,7 @@
     <div class="map-wrap">
       <ClientOnly>
         <LMap
+          @click="onMapClick"
           ref="mapRef"
           :zoom="15"
           :center="mapCenter"
@@ -97,7 +98,7 @@
           <button
             class="btn-venue"
             :class="{ active: settingVenue }"
-            @click="settingVenue = !settingVenue; showSchedules = false"
+            @click="startSettingVenue"
           >
             {{ newVenueLat ? '✅ Venue set! (click to change)' : '📍 Click map to set venue' }}
           </button>
@@ -251,6 +252,11 @@ function formatDate(dt) {
   })
 }
 
+function startSettingVenue() {
+  settingVenue.value = true
+  showSchedules.value = false  // close panel so map is visible and clickable
+}
+
 function getDistance(lat1, lng1, lat2, lng2) {
   const R = 6371000
   const dLat = (lat2 - lat1) * Math.PI / 180
@@ -305,8 +311,10 @@ function onMapClick(e) {
     newVenueLat.value = e.latlng.lat
     newVenueLng.value = e.latlng.lng
     settingVenue.value = false
-    showSchedules.value = true
+    showSchedules.value = true  // ← reopen panel so user can continue filling form
+    return
   }
+  // venue click is handled by LMarker directly
 }
 
 function onVenueClick() {
