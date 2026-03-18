@@ -315,9 +315,11 @@ function makeVenueIcon() {
           <div class="venue-banner-info">
             <strong>${activeSchedule.value?.title || 'Meet here!'}</strong>
             <span>${activeSchedule.value?.venue_name || ''}</span>
+             <span>${formatDate(activeSchedule.value?.scheduled_at)} </span>
           </div>
         </div>
         ${arrived.length ? `<div class="venue-avatars">${avatarRow}</div>` : ''}
+       
         <div class="venue-tap-hint">tap to RSVP</div>
       </div>
     `,
