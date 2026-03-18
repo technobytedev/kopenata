@@ -19,58 +19,65 @@
         <LMap
           ref="mapRef"
           :zoom="15"
-          :center="[10.6762, 122.9513]"
+          :center="mapCenter"
           :use-global-leaflet="false"
-          @click="onMapClick"
           style="height:100%;width:100%"
         >
           <LTileLayer
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             attribution="&copy; OpenStreetMap contributors"
           />
-          <!-- Attendee pins -->
-          <template v-for="pin in activePins" :key="pin.id">
+
+          <!-- Moving user pins (going, not arrived) -->
+          <template v-for="pin in movingPins" :key="pin.id">
             <LMarker
-              :lat-lng="[pin.lat, pin.lng]"
-              :icon="makeEmojiIcon(pin.emoji, pin.going)"
+              :lat-lng="[pin.last_seen_lat ?? pin.lat, pin.last_seen_lng ?? pin.lng]"
+              :icon="makeEmojiIcon(pin.emoji, true, false)"
             >
               <LTooltip>
                 <div class="tooltip-inner">
                   <strong>{{ pin.display_name }}</strong>
-                  <span>{{ pin.going ? '✅ Going' : '❌ Not going' }}</span>
+                  <span>🚶 On the way...</span>
                 </div>
               </LTooltip>
             </LMarker>
           </template>
-          <!-- Venue pin -->
+
+          <!-- Not going pins -->
+          <template v-for="pin in notGoingPins" :key="pin.id">
             <LMarker
+              :lat-lng="[pin.last_seen_lat ?? pin.lat, pin.last_seen_lng ?? pin.lng]"
+              :icon="makeEmojiIcon(pin.emoji, false, false)"
+            >
+              <LTooltip>
+                <div class="tooltip-inner">
+                  <strong>{{ pin.display_name }}</strong>
+                  <span>❌ Not going</span>
+                </div>
+              </LTooltip>
+            </LMarker>
+          </template>
+
+          <!-- Venue pin with arrived avatars attached -->
+          <LMarker
             v-if="activeSchedule?.lat && activeSchedule?.lng"
             :lat-lng="[activeSchedule.lat, activeSchedule.lng]"
             :icon="makeVenueIcon()"
-            >
-            <LTooltip :options="{ permanent: true, direction: 'top' }">
-                <div class="tooltip-inner">
-                <strong>{{ activeSchedule.venue_name || 'Meet here!' }}</strong>
-                <span>{{ formatDate(activeSchedule.scheduled_at) }}</span>
-                </div>
-            </LTooltip>
-            </LMarker>
+            @click="onVenueClick"
+          >
+          </LMarker>
+
         </LMap>
       </ClientOnly>
 
-      <!-- Map hint -->
-<div v-if="settingVenue" class="map-hint venue-hint">
-  📍 Click anywhere on the map to set the coffee venue!
-</div>
-<div v-else-if="activeSchedule && user && !myPin" class="map-hint">
-  ☕ Click the map to drop your pin!
-</div>
+      <!-- Venue hint -->
+      <div v-if="settingVenue" class="map-hint venue-hint" @click="showSchedules = true">
+        📍 Click anywhere on the map to set the coffee venue!
+      </div>
 
-      <!-- Active schedule badge -->
-      <div v-if="activeSchedule" class="schedule-badge">
-        <strong>{{ activeSchedule.title }}</strong>
-        <span>{{ formatDate(activeSchedule.scheduled_at) }}</span>
-        <span class="attendee-count">{{ activePins.filter(p=>p.going).length }} going</span>
+      <!-- No schedule selected -->
+      <div v-else-if="!activeSchedule" class="map-hint">
+        📅 Open Meetups to join a schedule!
       </div>
     </div>
 
@@ -82,28 +89,23 @@
           <button class="btn-ghost" @click="showSchedules = false">✕</button>
         </div>
 
-        <!-- Create new -->
-<div v-if="user" class="create-form">
-  <input v-model="newTitle" placeholder="Meetup name..." class="input" />
-  <input v-model="newDesc" placeholder="Notes (optional)" class="input" />
-  <input v-model="newDate" type="datetime-local" class="input" />
-  <input v-model="newVenueName" placeholder="Venue name (e.g. Bo's Coffee)" class="input" />
+        <div v-if="user" class="create-form">
+          <input v-model="newTitle" placeholder="Meetup name..." class="input" />
+          <input v-model="newDesc" placeholder="Notes (optional)" class="input" />
+          <input v-model="newDate" type="datetime-local" class="input" />
+          <input v-model="newVenueName" placeholder="Venue name (e.g. Bo's Coffee)" class="input" />
+          <button
+            class="btn-venue"
+            :class="{ active: settingVenue }"
+            @click="settingVenue = !settingVenue; showSchedules = false"
+          >
+            {{ newVenueLat ? '✅ Venue set! (click to change)' : '📍 Click map to set venue' }}
+          </button>
+          <button class="btn-primary full" @click="createSchedule" :disabled="!newTitle || !newDate">
+            + Add Schedule
+          </button>
+        </div>
 
-  <!-- Venue map picker -->
-  <button
-    class="btn-venue"
-    :class="{ active: settingVenue }"
-    @click="settingVenue = !settingVenue; showSchedules = false"
-  >
-    {{ newVenueLat ? '✅ Venue set! (click to change)' : '📍 Click map to set venue' }}
-  </button>
-
-  <button class="btn-primary full" @click="createSchedule" :disabled="!newTitle || !newDate">
-    + Add Schedule
-  </button>
-</div>
-
-        <!-- Schedule list -->
         <div class="schedule-list">
           <div
             v-for="s in schedules"
@@ -115,9 +117,10 @@
             <div class="schedule-item-main">
               <strong>{{ s.title }}</strong>
               <span class="schedule-date">{{ formatDate(s.scheduled_at) }}</span>
+              <span class="schedule-venue" v-if="s.venue_name">📍 {{ s.venue_name }}</span>
             </div>
             <span class="schedule-count">
-              {{ attendeeMap[s.id]?.filter(a=>a.going).length || 0 }} ☕
+              {{ attendeeMap[s.id]?.filter(a => a.going).length || 0 }} ☕
             </span>
           </div>
           <p v-if="!schedules.length" class="empty">No meetups yet. Create one!</p>
@@ -125,31 +128,65 @@
       </div>
     </Transition>
 
-    <!-- Pin drop modal -->
+    <!-- RSVP Modal (shown when clicking venue banner) -->
     <Transition name="fade">
-      <div v-if="pendingPin" class="modal-bg" @click.self="pendingPin = null">
+      <div v-if="showRsvpModal" class="modal-bg" @click.self="showRsvpModal = false">
         <div class="modal">
-          <h3>Drop your pin ✨</h3>
-          <p class="modal-sub">for <em>{{ activeSchedule?.title }}</em></p>
-
-          <div class="emoji-grid">
-            <button
-              v-for="e in EMOJIS"
-              :key="e"
-              class="emoji-btn"
-              :class="{ selected: chosenEmoji === e }"
-              @click="chosenEmoji = e"
-            >{{ e}}</button>
+          <!-- Schedule info -->
+          <div class="modal-venue-info">
+            <div class="modal-venue-emoji">☕</div>
+            <div>
+              <h3>{{ activeSchedule?.title }}</h3>
+              <p class="modal-sub">{{ formatDate(activeSchedule?.scheduled_at) }}</p>
+              <p class="modal-sub" v-if="activeSchedule?.venue_name">📍 {{ activeSchedule.venue_name }}</p>
+            </div>
           </div>
 
-          <div class="going-toggle">
-            <button :class="['toggle-btn', going ? 'active' : '']" @click="going = true">✅ Going</button>
-            <button :class="['toggle-btn', !going ? 'active-no' : '']" @click="going = false">❌ Can't make it</button>
+          <!-- Arrived avatars -->
+          <div v-if="arrivedPins.length" class="arrived-row">
+            <span class="arrived-label">Already there:</span>
+            <span v-for="pin in arrivedPins" :key="pin.id" class="arrived-emoji" :title="pin.display_name">
+              {{ pin.emoji }}
+            </span>
           </div>
 
-          <div class="modal-actions">
-            <button class="btn-outline" @click="pendingPin = null">Cancel</button>
-            <button class="btn-primary" @click="dropPin">Drop Pin!</button>
+          <!-- Going count -->
+          <div class="rsvp-stats">
+            <span>🚶 On the way: {{ movingPins.length }}</span>
+            <span>🎉 Arrived: {{ arrivedPins.length }}</span>
+          </div>
+
+          <!-- If not RSVPed yet -->
+          <div v-if="!myPin" class="emoji-section">
+            <p class="emoji-label">Pick your avatar:</p>
+            <div class="emoji-grid">
+              <button
+                v-for="e in EMOJIS"
+                :key="e"
+                class="emoji-btn"
+                :class="{ selected: chosenEmoji === e }"
+                @click="chosenEmoji = e"
+              >{{ e }}</button>
+            </div>
+          </div>
+
+          <!-- Action buttons -->
+          <div v-if="!myPin" class="modal-actions">
+            <button class="btn-notgoing" @click="rsvp(false)">❌ Can't make it</button>
+            <button class="btn-going" @click="rsvp(true)">✅ I'm Going!</button>
+          </div>
+
+          <!-- Already RSVPed -->
+          <div v-else class="already-rsvp">
+            <div class="my-pin-display">{{ myPin.emoji }}</div>
+            <p>You're <strong>{{ myPin.going ? 'going ✅' : 'not going ❌' }}</strong></p>
+            <p v-if="myPin.going && !myPin.arrived" class="tracking-note">
+              📡 Your location updates every 30s
+            </p>
+            <p v-if="myPin.arrived" class="arrived-note">
+              🎉 You've arrived!
+            </p>
+            <button class="btn-outline small" @click="cancelRsvp">Change my mind</button>
           </div>
         </div>
       </div>
@@ -158,31 +195,33 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { LMap, LTileLayer, LMarker, LTooltip } from '@vue-leaflet/vue-leaflet'
 import { divIcon } from 'leaflet'
+import 'leaflet/dist/leaflet.css'
 
 const supabase = useSupabaseClient()
 const user = useSupabaseUser()
 
 // ── State ──────────────────────────────────────────────
 const schedules = ref([])
-const attendeeMap = ref({})       // { scheduleId: [attendees] }
+const attendeeMap = ref({})
 const activeSchedule = ref(null)
 const showSchedules = ref(false)
-
-const newVenueName = ref('')
-const newVenueLat = ref(null)
-const newVenueLng = ref(null)
-
-const settingVenue = ref(false)
+const showRsvpModal = ref(false)
+const mapCenter = ref([10.6762, 122.9513])
 
 const newTitle = ref('')
 const newDesc = ref('')
 const newDate = ref('')
+const newVenueName = ref('')
+const newVenueLat = ref(null)
+const newVenueLng = ref(null)
+const settingVenue = ref(false)
 
-const pendingPin = ref(null)      // { lat, lng }
-const chosenEmoji = ref('☕')
-const going = ref(true)
+const chosenEmoji = ref('😀')
+const locationWatcher = ref(null)
+const locationInterval = ref(null)
 
 const EMOJIS = ['😀','😎','🥳','😊','🤩','😋','🥸','😇','🤓','😏','🫡','🤠','😤','🧐','😍','🥰','😆','😜','🤪','🫶','💪','🙋','🧑','👦','👧','🧒','👩','👨','🧔','👴','👵']
 
@@ -190,25 +229,43 @@ const EMOJIS = ['😀','😎','🥳','😊','🤩','😋','🥸','😇','🤓','
 const activePins = computed(() =>
   activeSchedule.value ? (attendeeMap.value[activeSchedule.value.id] || []) : []
 )
-
 const myPin = computed(() =>
-  user.value
-    ? activePins.value.find(p => p.user_id === user.value.id)
-    : null
+  user.value ? activePins.value.find(p => p.user_id === user.value.id) : null
+)
+const movingPins = computed(() =>
+  activePins.value.filter(p => p.going && !p.arrived && (p.last_seen_lat || p.lat))
+)
+const notGoingPins = computed(() =>
+  activePins.value.filter(p => !p.going && (p.last_seen_lat || p.lat))
+)
+const arrivedPins = computed(() =>
+  activePins.value.filter(p => p.going && p.arrived)
 )
 
 // ── Helpers ────────────────────────────────────────────
 function formatDate(dt) {
+  if (!dt) return ''
   return new Date(dt).toLocaleString('en-PH', {
     month: 'short', day: 'numeric',
     hour: '2-digit', minute: '2-digit'
   })
 }
 
-function makeEmojiIcon(emoji, isGoing) {
-  const opacity = isGoing ? '1' : '0.45'
+function getDistance(lat1, lng1, lat2, lng2) {
+  const R = 6371000
+  const dLat = (lat2 - lat1) * Math.PI / 180
+  const dLng = (lng2 - lng1) * Math.PI / 180
+  const a = Math.sin(dLat/2)**2 +
+    Math.cos(lat1 * Math.PI/180) * Math.cos(lat2 * Math.PI/180) * Math.sin(dLng/2)**2
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a))
+}
+
+function makeEmojiIcon(emoji, going, arrived) {
+  if (arrived) return divIcon({ html: '', className: '', iconSize: [0,0] }) // hidden, shown on banner
+  const opacity = going ? '1' : '0.4'
+  const anim = going ? 'animation:walk 0.6s ease-in-out infinite alternate' : ''
   return divIcon({
-    html: `<div class="pin-emoji" style="opacity:${opacity};animation:walk 0.6s ease-in-out infinite alternate">${emoji}</div>`,
+    html: `<div class="pin-emoji" style="opacity:${opacity};${anim}">${emoji}</div>`,
     className: '',
     iconSize: [40, 40],
     iconAnchor: [20, 40],
@@ -216,44 +273,75 @@ function makeEmojiIcon(emoji, isGoing) {
   })
 }
 
-// ── Data loading ───────────────────────────────────────
+function makeVenueIcon() {
+  const arrived = arrivedPins.value
+  const avatarRow = arrived.map(p =>
+    `<span class="banner-avatar" title="${p.display_name}">${p.emoji}</span>`
+  ).join('')
+
+  return divIcon({
+    html: `
+      <div class="venue-banner" onclick="">
+        <div class="venue-banner-top">
+          <span class="venue-pin-icon">📍</span>
+          <div class="venue-banner-info">
+            <strong>${activeSchedule.value?.title || 'Meet here!'}</strong>
+            <span>${activeSchedule.value?.venue_name || ''}</span>
+          </div>
+        </div>
+        ${arrived.length ? `<div class="venue-avatars">${avatarRow}</div>` : ''}
+        <div class="venue-tap-hint">tap to RSVP</div>
+      </div>
+    `,
+    className: '',
+    iconSize: [180, 'auto'],
+    iconAnchor: [90, 80],
+  })
+}
+
+// ── Map click for venue setting ────────────────────────
+function onMapClick(e) {
+  if (settingVenue.value) {
+    newVenueLat.value = e.latlng.lat
+    newVenueLng.value = e.latlng.lng
+    settingVenue.value = false
+    showSchedules.value = true
+  }
+}
+
+function onVenueClick() {
+  if (!user.value) { navigateTo('/login'); return }
+  showRsvpModal.value = true
+}
+
+// ── Data ───────────────────────────────────────────────
 async function loadSchedules() {
   const { data } = await supabase
-    .from('schedules')
-    .select('*')
-    .order('scheduled_at', { ascending: true })
+    .from('schedules').select('*').order('scheduled_at', { ascending: true })
   schedules.value = data || []
-  for (const s of schedules.value) {
-    await loadAttendees(s.id)
-  }
-  // Auto-select nearest upcoming
+  for (const s of schedules.value) await loadAttendees(s.id)
   if (!activeSchedule.value && schedules.value.length) {
     const upcoming = schedules.value.find(s => new Date(s.scheduled_at) > new Date())
     activeSchedule.value = upcoming || schedules.value[0]
+    if (activeSchedule.value?.lat) mapCenter.value = [activeSchedule.value.lat, activeSchedule.value.lng]
   }
 }
 
 async function loadAttendees(scheduleId) {
-  const { data } = await supabase
-    .from('attendees')
-    .select('*')
-    .eq('schedule_id', scheduleId)
+  const { data } = await supabase.from('attendees').select('*').eq('schedule_id', scheduleId)
   attendeeMap.value[scheduleId] = data || []
 }
 
-function makeVenueIcon() {
-  return divIcon({
-    html: `<div class="venue-pin">📍<div class="venue-label">${activeSchedule.value?.venue_name || 'Meet here!'}</div></div>`,
-    className: '',
-    iconSize: [60, 60],
-    iconAnchor: [20, 50],
-  })
+async function selectSchedule(s) {
+  activeSchedule.value = s
+  showSchedules.value = false
+  await loadAttendees(s.id)
+  if (s.lat && s.lng) mapCenter.value = [s.lat, s.lng]
 }
 
-// ── Actions ────────────────────────────────────────────
 async function createSchedule() {
   if (!user.value || !newTitle.value || !newDate.value) return
-  const { data, error } = await supabase.from('schedules').insert({
+  const { data } = await supabase.from('schedules').insert({
     title: newTitle.value,
     description: newDesc.value,
     scheduled_at: new Date(newDate.value).toISOString(),
@@ -268,54 +356,104 @@ async function createSchedule() {
     newTitle.value = ''; newDesc.value = ''; newDate.value = ''
     newVenueName.value = ''; newVenueLat.value = null; newVenueLng.value = null
     showSchedules.value = false
-    activeSchedule.value = data  // auto-select new schedule
+    activeSchedule.value = data
+    if (data.lat) mapCenter.value = [data.lat, data.lng]
   }
 }
-async function selectSchedule(s) {
-  activeSchedule.value = s
-  showSchedules.value = false
-  await loadAttendees(s.id)
-}
 
-function onMapClick(e) {
-  if (!user.value) { navigateTo('/login'); return }
+// ── RSVP ──────────────────────────────────────────────
+async function rsvp(isGoing) {
+  if (!user.value || !activeSchedule.value) return
 
-  // Venue-setting mode (when creating schedule)
-  if (settingVenue.value) {
-    newVenueLat.value = e.latlng.lat
-    newVenueLng.value = e.latlng.lng
-    settingVenue.value = false
-    return
+  // Get current GPS position first
+  let lat = activeSchedule.value.lat
+  let lng = activeSchedule.value.lng
+
+  if (isGoing && navigator.geolocation) {
+    try {
+      const pos = await new Promise((res, rej) =>
+        navigator.geolocation.getCurrentPosition(res, rej, { timeout: 5000 })
+      )
+      lat = pos.coords.latitude
+      lng = pos.coords.longitude
+    } catch (e) { /* use venue as fallback */ }
   }
 
-  if (!activeSchedule.value) { showSchedules.value = true; return }
-  pendingPin.value = { lat: e.latlng.lat, lng: e.latlng.lng }
-}
-
-async function dropPin() {
-  if (!pendingPin.value || !activeSchedule.value || !user.value) return
-  const name = user.value.user_metadata?.full_name || user.value.email
   const pin = {
     schedule_id: activeSchedule.value.id,
-    user_id: user.value.id,   // ← this must match auth.uid()
-    display_name: name,
+    user_id: user.value.id,
+    display_name: user.value.user_metadata?.full_name || user.value.email,
     emoji: chosenEmoji.value,
-    going: going.value,
-    lat: pendingPin.value.lat,
-    lng: pendingPin.value.lng,
+    going: isGoing,
+    lat,
+    lng,
+    last_seen_lat: isGoing ? lat : null,
+    last_seen_lng: isGoing ? lng : null,
+    arrived: false,
+    updated_at: new Date().toISOString(),
   }
-  const { error } = await supabase
-    .from('attendees')
-    .upsert(pin, { onConflict: 'schedule_id,user_id' })
-  
-  console.log('pin error:', error) // temp debug
-  if (!error) {
-    await loadAttendees(activeSchedule.value.id)
-    pendingPin.value = null
-  }
+
+  await supabase.from('attendees').upsert(pin, { onConflict: 'schedule_id,user_id' })
+  await loadAttendees(activeSchedule.value.id)
+
+  if (isGoing) startLocationTracking()
 }
 
+async function cancelRsvp() {
+  if (!user.value || !activeSchedule.value) return
+  await supabase.from('attendees')
+    .delete()
+    .eq('schedule_id', activeSchedule.value.id)
+    .eq('user_id', user.value.id)
+  await loadAttendees(activeSchedule.value.id)
+  stopLocationTracking()
+}
+
+// ── Location tracking ──────────────────────────────────
+function startLocationTracking() {
+  if (!navigator.geolocation) return
+  stopLocationTracking()
+
+  async function pushLocation() {
+    if (!myPin.value?.going || myPin.value?.arrived) {
+      stopLocationTracking(); return
+    }
+    navigator.geolocation.getCurrentPosition(async (pos) => {
+      const lat = pos.coords.latitude
+      const lng = pos.coords.longitude
+
+      // Check if arrived (within 50m)
+      const dist = getDistance(lat, lng, activeSchedule.value.lat, activeSchedule.value.lng)
+      const arrived = dist <= 50
+
+      await supabase.from('attendees').update({
+        last_seen_lat: lat,
+        last_seen_lng: lng,
+        arrived,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('schedule_id', activeSchedule.value.id)
+      .eq('user_id', user.value.id)
+
+      await loadAttendees(activeSchedule.value.id)
+    })
+  }
+
+  pushLocation() // immediate first push
+  locationInterval.value = setInterval(pushLocation, 30000) // every 30s
+}
+
+function stopLocationTracking() {
+  if (locationInterval.value) { clearInterval(locationInterval.value); locationInterval.value = null }
+}
+
+// Resume tracking if already going when page loads
+watch(myPin, (pin) => {
+  if (pin?.going && !pin?.arrived && !locationInterval.value) startLocationTracking()
+}, { immediate: true })
+
 async function signOut() {
+  stopLocationTracking()
   await supabase.auth.signOut()
   navigateTo('/login')
 }
@@ -335,11 +473,14 @@ onMounted(async () => {
     })
     .subscribe()
 })
-onUnmounted(() => { realtimeChannel?.unsubscribe() })
+
+onUnmounted(() => {
+  realtimeChannel?.unsubscribe()
+  stopLocationTracking()
+})
 </script>
 
 <style>
-/* Walking emoji animation - global so leaflet can use it */
 @keyframes walk {
   from { transform: translateY(0) rotate(-5deg); }
   to   { transform: translateY(-6px) rotate(5deg); }
@@ -350,42 +491,54 @@ onUnmounted(() => { realtimeChannel?.unsubscribe() })
   filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3));
   cursor: pointer;
 }
+
+/* Venue banner */
+.venue-banner {
+  background: var(--brown, #3d1f0a);
+  color: var(--cream, #f5f0e8);
+  border: 2px solid var(--steam, #c9a87c);
+  padding: 0.5rem 0.75rem;
+  cursor: pointer;
+  box-shadow: 4px 4px 0 rgba(0,0,0,0.3);
+  min-width: 160px;
+  font-family: "Courier Prime", monospace;
+  transition: transform 0.15s;
+}
+.venue-banner:hover { transform: scale(1.03); }
+.venue-banner-top { display: flex; align-items: center; gap: 0.4rem; }
+.venue-pin-icon { font-size: 1.2rem; }
+.venue-banner-info { display: flex; flex-direction: column; }
+.venue-banner-info strong { font-size: 0.85rem; line-height: 1.2; }
+.venue-banner-info span { font-size: 0.7rem; opacity: 0.75; }
+.venue-avatars { display: flex; flex-wrap: wrap; gap: 2px; margin-top: 0.35rem; padding-top: 0.35rem; border-top: 1px dashed var(--steam, #c9a87c); }
+.banner-avatar { font-size: 1.2rem; animation: walk 0.6s ease-in-out infinite alternate; display: inline-block; }
+.venue-tap-hint { font-size: 0.65rem; opacity: 0.6; text-align: center; margin-top: 0.3rem; letter-spacing: 0.05em; }
 </style>
 
 <style scoped>
 .app { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
 
-/* Header */
 .topbar {
   display: flex; align-items: center; justify-content: space-between;
   padding: 0.6rem 1.25rem;
-  background: var(--brown);
-  color: var(--cream);
-  z-index: 1000;
-  border-bottom: 3px solid var(--coffee);
+  background: var(--brown); color: var(--cream);
+  z-index: 1000; border-bottom: 3px solid var(--coffee);
 }
-.logo { font-family: "Berkshire Swash", serif; font-size: 1.4rem; color: var(--cream); letter-spacing: 0.05em; }
+.logo { font-family: "Berkshire Swash", serif; font-size: 1.4rem; color: var(--cream); }
 .header-right { display: flex; align-items: center; gap: 0.75rem; }
 .user-pill { display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; }
 
-/* Map */
 .map-wrap { position: relative; flex: 1; }
+
 .map-hint {
   position: absolute; bottom: 1.5rem; left: 50%; transform: translateX(-50%);
   background: var(--brown); color: var(--cream);
   padding: 0.5rem 1.25rem; font-size: 0.85rem;
   border: 2px solid var(--steam); z-index: 500;
-  animation: pulse 2s ease-in-out infinite;
+  animation: pulse 2s ease-in-out infinite; white-space: nowrap;
 }
+.venue-hint { background: var(--accent, #e8533a) !important; font-weight: 700; }
 @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.7} }
-
-.schedule-badge {
-  position: absolute; top: 1rem; left: 50%; transform: translateX(-50%);
-  background: var(--card-bg); border: 2px solid var(--coffee);
-  padding: 0.5rem 1rem; display: flex; gap: 1rem; align-items: center;
-  z-index: 500; font-size: 0.85rem; box-shadow: 4px 4px 0 var(--coffee);
-}
-.attendee-count { background: var(--coffee); color: var(--cream); padding: 0.1rem 0.5rem; font-size: 0.75rem; }
 
 /* Panel */
 .panel {
@@ -411,38 +564,62 @@ onUnmounted(() => { realtimeChannel?.unsubscribe() })
 .schedule-item.active { background: var(--brown); color: var(--cream); border-color: var(--brown); }
 .schedule-item-main { display: flex; flex-direction: column; gap: 0.2rem; }
 .schedule-date { font-size: 0.78rem; opacity: 0.7; }
+.schedule-venue { font-size: 0.75rem; opacity: 0.8; }
 .schedule-count { font-size: 1.2rem; }
 .empty { text-align: center; color: var(--coffee); font-style: italic; padding: 2rem; }
 
 /* Modal */
 .modal-bg {
-  position: fixed; inset: 0; background: rgba(61,31,10,0.5);
+  position: fixed; inset: 0; background: rgba(61,31,10,0.55);
   display: grid; place-items: center; z-index: 3000;
 }
 .modal {
   background: var(--cream); border: 3px solid var(--brown);
-  padding: 2rem; width: 340px; box-shadow: 8px 8px 0 var(--brown);
+  padding: 1.75rem; width: 340px; box-shadow: 8px 8px 0 var(--brown);
+  max-height: 90vh; overflow-y: auto;
 }
-.modal h3 { font-family: "Berkshire Swash", serif; font-size: 1.5rem; margin-bottom: 0.25rem; }
-.modal-sub { color: var(--coffee); font-style: italic; margin-bottom: 1.25rem; }
+.modal-venue-info { display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem; }
+.modal-venue-emoji { font-size: 2.5rem; }
+.modal h3 { font-family: "Berkshire Swash", serif; font-size: 1.4rem; }
+.modal-sub { color: var(--coffee); font-size: 0.85rem; margin-top: 0.2rem; }
+
+.arrived-row { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.75rem; padding: 0.5rem; background: white; border: 1px dashed var(--coffee); }
+.arrived-label { font-size: 0.75rem; color: var(--coffee); }
+.arrived-emoji { font-size: 1.4rem; }
+
+.rsvp-stats { display: flex; gap: 1rem; font-size: 0.82rem; color: var(--coffee); margin-bottom: 1rem; }
+
+.emoji-label { font-size: 0.85rem; color: var(--coffee); margin-bottom: 0.5rem; }
 .emoji-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 0.4rem; margin-bottom: 1.25rem; }
 .emoji-btn {
-  font-size: 1.5rem; padding: 0.25rem; border: 2px solid transparent;
+  font-size: 1.4rem; padding: 0.2rem; border: 2px solid transparent;
   background: none; cursor: pointer; border-radius: 4px; transition: all 0.1s;
 }
 .emoji-btn:hover { border-color: var(--coffee); transform: scale(1.2); }
 .emoji-btn.selected { border-color: var(--brown); background: var(--steam); }
-.going-toggle { display: flex; gap: 0.5rem; margin-bottom: 1.25rem; }
-.toggle-btn {
-  flex: 1; padding: 0.5rem; border: 2px solid var(--coffee);
-  background: white; cursor: pointer; font-family: "Courier Prime", monospace;
-  font-size: 0.85rem; transition: all 0.1s;
-}
-.toggle-btn.active { background: var(--brown); color: var(--cream); border-color: var(--brown); }
-.toggle-btn.active-no { background: var(--coffee); color: var(--cream); }
-.modal-actions { display: flex; gap: 0.75rem; }
 
-/* Buttons */
+.modal-actions { display: flex; gap: 0.75rem; }
+.btn-going {
+  flex: 1; padding: 0.65rem; background: var(--brown); color: var(--cream);
+  border: 2px solid var(--brown); cursor: pointer;
+  font-family: "Courier Prime", monospace; font-weight: 700; font-size: 0.95rem;
+  transition: all 0.15s; box-shadow: 3px 3px 0 var(--coffee);
+}
+.btn-going:hover { transform: translate(-1px,-1px); box-shadow: 4px 4px 0 var(--coffee); }
+.btn-notgoing {
+  flex: 1; padding: 0.65rem; background: white; color: var(--brown);
+  border: 2px solid var(--coffee); cursor: pointer;
+  font-family: "Courier Prime", monospace; font-size: 0.9rem; transition: all 0.15s;
+}
+.btn-notgoing:hover { background: var(--cream); }
+
+.already-rsvp { text-align: center; padding: 0.5rem 0; }
+.my-pin-display { font-size: 3rem; margin-bottom: 0.5rem; animation: walk 0.6s ease-in-out infinite alternate; display: inline-block; }
+.tracking-note { font-size: 0.8rem; color: var(--coffee); margin-top: 0.5rem; font-style: italic; }
+.arrived-note { font-size: 0.9rem; color: var(--brown); font-weight: 700; margin-top: 0.5rem; }
+.btn-outline.small { margin-top: 1rem; padding: 0.35rem 1rem; font-size: 0.8rem; }
+
+/* Shared buttons */
 .btn-primary {
   padding: 0.5rem 1.25rem; background: var(--brown); color: var(--cream);
   border: 2px solid var(--brown); cursor: pointer;
@@ -450,7 +627,7 @@ onUnmounted(() => { realtimeChannel?.unsubscribe() })
   transition: all 0.15s; box-shadow: 3px 3px 0 var(--coffee);
 }
 .btn-primary:hover { transform: translate(-1px,-1px); box-shadow: 4px 4px 0 var(--coffee); }
-.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
 .btn-primary.full { width: 100%; }
 .btn-outline {
   padding: 0.5rem 1.25rem; background: transparent; color: var(--brown);
@@ -462,6 +639,12 @@ onUnmounted(() => { realtimeChannel?.unsubscribe() })
   background: none; border: none; cursor: pointer; color: inherit;
   font-family: "Courier Prime", monospace; text-decoration: underline; font-size: 0.85rem;
 }
+.btn-venue {
+  width: 100%; padding: 0.5rem 0.75rem; border: 2px dashed var(--coffee);
+  background: white; cursor: pointer; font-family: "Courier Prime", monospace;
+  font-size: 0.85rem; color: var(--coffee); transition: all 0.15s;
+}
+.btn-venue:hover, .btn-venue.active { background: var(--coffee); color: var(--cream); border-style: solid; }
 .input {
   width: 100%; padding: 0.5rem 0.75rem; border: 2px solid var(--coffee);
   font-family: "Courier Prime", monospace; font-size: 0.9rem;
@@ -469,40 +652,12 @@ onUnmounted(() => { realtimeChannel?.unsubscribe() })
 }
 .input:focus { border-color: var(--brown); }
 
-/* Tooltip */
 .tooltip-inner { display: flex; flex-direction: column; gap: 0.2rem; font-family: "Courier Prime", monospace; }
 
-/* Transitions */
 .slide-enter-active, .slide-leave-active { transition: transform 0.25s ease; }
 .slide-enter-from, .slide-leave-to { transform: translateX(100%); }
 .fade-enter-active, .fade-leave-active { transition: opacity 0.2s; }
 .fade-enter-from, .fade-leave-to { opacity: 0; }
 
-@media (max-width: 500px) {
-  .panel { width: 100%; }
-}
-
-.btn-venue {
-  width: 100%;
-  padding: 0.5rem 0.75rem;
-  border: 2px dashed var(--coffee);
-  background: white;
-  cursor: pointer;
-  font-family: "Courier Prime", monospace;
-  font-size: 0.85rem;
-  color: var(--coffee);
-  transition: all 0.15s;
-  text-align: center;
-}
-.btn-venue:hover, .btn-venue.active {
-  background: var(--coffee);
-  color: var(--cream);
-  border-style: solid;
-}
-
-.venue-hint {
-  background: var(--accent) !important;
-  font-weight: 700;
-  font-size: 0.95rem;
-}
+@media (max-width: 500px) { .panel { width: 100%; } }
 </style>
