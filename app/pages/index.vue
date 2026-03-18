@@ -194,7 +194,9 @@
             <p v-if="myPin.arrived" class="arrived-note">
               🎉 You've arrived!
             </p>
-            <button class="btn-outline small" @click="cancelRsvp">Change my mind</button>
+            <button class="btn-outline small" style="margin-right: 5px;" @click="cancelRsvp">Change my mind</button> 
+            <button class="btn-outline small" @click="showRsvpModal = false">Close</button>
+            
           </div>
         </div>
       </div>
@@ -441,11 +443,24 @@ async function rsvp(isGoing) {
 
 async function cancelRsvp() {
   if (!user.value || !activeSchedule.value) return
-  const name = user.value.user_metadata?.full_name || user.value.email
-  await supabase.from('attendees')
+  
+  const name = user.value.user_metadata?.full_name
+  console.log('Deleting pin for:', name, 'schedule:', activeSchedule.value.id)
+
+  const { data, error } = await supabase
+    .from('attendees')
     .delete()
     .eq('schedule_id', activeSchedule.value.id)
     .eq('display_name', name)
+    .select() // ← forces supabase to return what was deleted
+
+  console.log('deleted:', data, 'error:', error)
+
+  if (error) {
+    console.error('Delete failed:', error)
+    return
+  }
+
   await loadAttendees(activeSchedule.value.id)
   stopLocationTracking()
   showRsvpModal.value = false
