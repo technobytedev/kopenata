@@ -1,17 +1,21 @@
 <template>
   <div class="app">
     <!-- Header -->
-    <header class="topbar">
-      <h3 class="logo">KOPENATA ☕</h3>
+    <header class="topbar" style="position:fixed;width: 100%; margin-bottom: 200px;">
+      <h3 class="logo" style="font-size: 16px!important;">KOPENATA ☕</h3>
       <div class="header-right">
-        <button v-if="!user" class="btn-outline" @click="navigateTo('/login')">Sign in</button>
+        <button v-if="!user" class="btn-outline" style="color:white" @click="navigateTo('/login')">Sign in</button>
         <div v-else class="user-pill">
           <span>{{ user.user_metadata?.name?.split(' ')[0] }}</span>
           <button class="btn-ghost" @click="signOut">out</button>
         </div>
         <button class="btn-primary" @click="showSchedules = true">📅 Meetups</button>
       </div>
+      
     </header>
+    <br>
+    <br>
+    <br>
 
     <!-- Map -->
     <div class="map-wrap">
@@ -589,7 +593,7 @@ onUnmounted(() => {
   background: var(--brown); color: var(--cream);
   z-index: 1000; border-bottom: 3px solid var(--coffee);
 }
-.logo { font-family: "Berkshire Swash", serif; font-size: 1.4rem; color: var(--cream); }
+.logo { font-size: 20px; color: var(--cream); }
 .header-right { display: flex; align-items: center; gap: 0.75rem; }
 .user-pill { display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; }
 

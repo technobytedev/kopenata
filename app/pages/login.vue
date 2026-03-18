@@ -43,7 +43,7 @@ async function signIn() {
 }
 .coffee-icon { font-size: 4rem; margin-bottom: 1rem; animation: steam 2s ease-in-out infinite; }
 @keyframes steam { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
-h1 { font-family: "Berkshire Swash", serif; font-size: 3rem; color: var(--brown); letter-spacing: 0.1em; }
+h1 {  font-size: 3rem; color: var(--brown); letter-spacing: 0.1em; }
 .tagline { margin: 0.75rem 0 2rem; color: var(--coffee); font-style: italic; line-height: 1.6; }
 .google-btn {
   display: inline-flex;
