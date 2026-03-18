@@ -1,0 +1,56 @@
+@import url('https://fonts.googleapis.com/css2?family=Berkshire+Swash&family=Courier+Prime:ital,wght@0,400;0,700;1,400;1,700&display=swap');
+
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+:root {
+    --cream: #f5f0e8;
+    --brown: #3d1f0a;
+    --coffee: #7b4f2e;
+    --steam: #c9a87c;
+    --accent: #e8533a;
+    --card-bg: rgba(245, 240, 232, 0.95);
+}
+
+body {
+    font-family: "Courier Prime", monospace;
+    background: var(--cream);
+    color: var(--brown);
+    overflow: hidden;
+}
+
+/* Leaflet override */
+/* .leaflet-container {
+    font-family: "Courier Prime", monospace;
+} */
+
+.leaflet-tile {
+    filter: sepia(20%) saturate(80%);
+}
+
+/* Add this to global <style> (not scoped) */
+.venue-pin {
+    font-size: 2rem;
+    position: relative;
+    display: inline-block;
+}
+
+.venue-label {
+    position: absolute;
+    top: -1.8rem;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--brown, #3d1f0a);
+    color: #f5f0e8;
+    font-size: 0.65rem;
+    font-family: "Courier Prime", monospace;
+    white-space: nowrap;
+    padding: 0.15rem 0.4rem;
+    font-weight: 700;
+    pointer-events: none;
+}
