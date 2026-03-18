@@ -319,6 +319,12 @@ function onMapClick(e) {
 
 function onVenueClick() {
   if (!user.value) { navigateTo('/login'); return }
+  
+  // Pre-select their existing emoji if they already have a pin
+  if (myPin.value) {
+    chosenEmoji.value = myPin.value.emoji
+  }
+
   showRsvpModal.value = true
 }
 
@@ -373,7 +379,6 @@ async function createSchedule() {
 async function rsvp(isGoing) {
   if (!user.value || !activeSchedule.value) return
 
-  // Get current GPS position first
   let lat = activeSchedule.value.lat
   let lng = activeSchedule.value.lng
 
@@ -401,10 +406,23 @@ async function rsvp(isGoing) {
     updated_at: new Date().toISOString(),
   }
 
-  await supabase.from('attendees').upsert(pin, { onConflict: 'schedule_id,user_id' })
+  const { error } = await supabase
+    .from('attendees')
+    .upsert(pin, { 
+      onConflict: 'schedule_id,user_id',  // ← key: update if same user+schedule
+      ignoreDuplicates: false             // ← key: always overwrite, never skip
+    })
+
+  if (error) { console.error('rsvp error:', error); return }
+
   await loadAttendees(activeSchedule.value.id)
 
+  // Load their saved emoji if they already had a pin
+  const existing = activePins.value.find(p => p.user_id === user.value.id)
+  if (existing) chosenEmoji.value = existing.emoji
+
   if (isGoing) startLocationTracking()
+  else stopLocationTracking()
 }
 
 async function cancelRsvp() {
