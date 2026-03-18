@@ -49,7 +49,7 @@
           </template>
 
           <!-- Not going pins -->
-          <template v-for="pin in notGoingPins" :key="pin.id">
+          <!-- <template v-for="pin in notGoingPins" :key="pin.id">
             <LMarker
               :lat-lng="[pin.last_seen_lat ?? pin.lat, pin.last_seen_lng ?? pin.lng]"
               :icon="makeEmojiIcon(pin.emoji, false, false)"
@@ -61,7 +61,7 @@
                 </div>
               </LTooltip>
             </LMarker>
-          </template>
+          </template> -->
 
           <!-- Venue pin with arrived avatars -->
           <LMarker
@@ -84,6 +84,18 @@
       <div v-else-if="activeSchedule && !myPin" class="map-hint">
         ☕ Tap the venue banner to RSVP!
       </div>
+      <!-- Ghost bar for not-going users -->
+  <div v-if="notGoingPins.length" class="ghost-bar">
+    <span class="ghost-label">couldn't make it:</span>
+    <span
+      v-for="pin in notGoingPins"
+      :key="pin.id"
+      class="ghost-pill"
+      :title="pin.display_name"
+    >
+      👻 <span class="ghost-name">{{ pin.display_name.split(' ')[0] }}</span>
+    </span>
+  </div>
     </div>
 
     <!-- Schedules panel -->
@@ -772,4 +784,48 @@ onUnmounted(() => {
 .fade-enter-from, .fade-leave-to { opacity: 0; }
 
 @media (max-width: 500px) { .panel { width: 100%; } }
+
+
+.ghost-bar {
+  position: absolute;
+  bottom: 1rem;
+  left: 50%;
+  margin-bottom: 60px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  justify-content: center;
+  background: rgba(61, 31, 10, 0.75);
+  color: var(--cream);
+  padding: 0.4rem 1rem;
+  border: 2px dashed var(--steam);
+  z-index: 500;
+  pointer-events: none;
+  max-width: 90vw;
+  backdrop-filter: blur(4px);
+}
+.ghost-label {
+  font-size: 0.7rem;
+  opacity: 0.6;
+  font-style: italic;
+  white-space: nowrap;
+}
+.ghost-pill {
+  font-size: 0.85rem;
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+  opacity: 0.75;
+  animation: float 3s ease-in-out infinite;
+}
+.ghost-name {
+  font-size: 0.75rem;
+  opacity: 0.8;
+}
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
+}
 </style>
