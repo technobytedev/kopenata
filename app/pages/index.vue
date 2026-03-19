@@ -451,19 +451,22 @@ async function rsvp(isGoing) {
     updated_at: new Date().toISOString(),
   }
 
-  const { error } = await supabase
-    .from('attendees')
-    .upsert(pin, {
-      onConflict: 'schedule_id,display_name',
-      ignoreDuplicates: false
-    })
+const { error } = await supabase
+  .from('attendees')
+  .upsert(pin, {
+    onConflict: 'schedule_id,display_name',
+    ignoreDuplicates: false
+  })
 
-  if (error) { console.error('rsvp error:', error); return }
+console.log('RSVP pin saved:', pin, 'error:', error)
 
-  await loadAttendees(activeSchedule.value.id)
+if (error) { console.error('rsvp error:', error); return }
 
-  if (isGoing) startLocationTracking()
-  else stopLocationTracking()
+await loadAttendees(activeSchedule.value.id)
+console.log('My pin after rsvp:', myPin.value) // should show going: true
+
+if (isGoing) startLocationTracking()
+else stopLocationTracking()
 }
 
 async function cancelRsvp() {
@@ -483,19 +486,28 @@ async function cancelRsvp() {
 
 // ── Location tracking ──────────────────────────────────
 function startLocationTracking() {
-  if (!navigator.geolocation) return
+  if (!navigator.geolocation) {
+    console.warn('Geolocation not supported')
+    return
+  }
   stopLocationTracking()
 
   async function pushLocation() {
+    // Read fresh values every time, not captured ones
     const schedule = activeSchedule.value
     const currentUser = user.value
-    const pin = myPin.value
 
-    // Guard: stop if no longer valid
-    if (!schedule?.lat || !currentUser || !pin?.going || pin?.arrived) {
-      stopLocationTracking()
+    if (!schedule || !currentUser) {
+      console.warn('No schedule or user, skipping location push')
       return
     }
+
+    if (!schedule.lat || !schedule.lng) {
+      console.warn('Schedule has no venue set, skipping')
+      return
+    }
+
+    console.log('📍 Pushing location for:', currentUser.user_metadata?.full_name || currentUser.email)
 
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
@@ -506,9 +518,9 @@ function startLocationTracking() {
         const dist = getDistance(lat, lng, schedule.lat, schedule.lng)
         const arrived = dist <= 50
 
-        console.log(`📍 Location update: ${lat},${lng} | dist: ${Math.round(dist)}m | arrived: ${arrived}`)
+        console.log(`✅ Got position: ${lat}, ${lng} | dist: ${Math.round(dist)}m | arrived: ${arrived}`)
 
-        const { error } = await supabase
+        const { data, error } = await supabase
           .from('attendees')
           .update({
             last_seen_lat: lat,
@@ -518,28 +530,29 @@ function startLocationTracking() {
           })
           .eq('schedule_id', schedule.id)
           .eq('display_name', name)
+          .select() // ← see what was actually updated
 
-        if (error) {
-          console.error('Location update failed:', error)
-          return
+        console.log('DB update result:', data, error)
+
+        if (!error) {
+          await loadAttendees(schedule.id)
         }
-
-        // Manually reload so OUR OWN update reflects immediately
-        await loadAttendees(schedule.id)
       },
       (err) => {
-        console.warn('Geolocation error:', err.message)
+        console.warn('❌ Geolocation error:', err.code, err.message)
       },
       {
         enableHighAccuracy: true,
         timeout: 10000,
-        maximumAge: 15000
+        maximumAge: 0 // ← always get fresh position, no cache
       }
     )
   }
 
-  pushLocation() // immediate
-  locationInterval.value = setInterval(pushLocation, 15000) // every 15s (more responsive)
+  // Run immediately then every 15s
+  pushLocation()
+  locationInterval.value = setInterval(pushLocation, 15000)
+  console.log('🟢 Location tracking started')
 }
 
 function stopLocationTracking() {
