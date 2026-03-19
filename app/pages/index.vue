@@ -22,6 +22,7 @@
       <ClientOnly>
         <LMap
           ref="mapRef"
+          :key="mapKey"
           :zoom="15"
           :center="mapCenter"
           :use-global-leaflet="false"
@@ -233,6 +234,9 @@ const showSchedules = ref(false)
 const showRsvpModal = ref(false)
 const mapCenter = ref([10.6762, 122.9513])
 
+const mapKey = ref(0)
+
+
 const newTitle = ref('')
 const newDesc = ref('')
 const newDate = ref('')
@@ -376,6 +380,7 @@ async function loadAttendees(scheduleId) {
     .select('*')
     .eq('schedule_id', scheduleId)
   attendeeMap.value[scheduleId] = data || []
+  mapKey.value++ // ← force marker re-render
 }
 
 async function selectSchedule(s) {
@@ -456,24 +461,14 @@ async function rsvp(isGoing) {
 }
 
 async function cancelRsvp() {
-  if (!user.value || !activeSchedule.value) return
-  
-  const name = user.value.user_metadata?.full_name
-  console.log('Deleting pin for:', name, 'schedule:', activeSchedule.value.id)
+  if (!user.value || !activeSchedule.value || !myPin.value) return
 
-  const { data, error } = await supabase
+  const { error } = await supabase
     .from('attendees')
     .delete()
-    .eq('schedule_id', activeSchedule.value.id)
-    .eq('display_name', name)
-    .select() // ← forces supabase to return what was deleted
+    .eq('id', myPin.value.id)
 
-  console.log('deleted:', data, 'error:', error)
-
-  if (error) {
-    console.error('Delete failed:', error)
-    return
-  }
+  if (error) { console.error('Delete failed:', error); return }
 
   await loadAttendees(activeSchedule.value.id)
   stopLocationTracking()
@@ -486,36 +481,59 @@ function startLocationTracking() {
   stopLocationTracking()
 
   async function pushLocation() {
-    if (!myPin.value?.going || myPin.value?.arrived) {
-      stopLocationTracking(); return
+    const schedule = activeSchedule.value
+    const currentUser = user.value
+    const pin = myPin.value
+
+    // Guard: stop if no longer valid
+    if (!schedule?.lat || !currentUser || !pin?.going || pin?.arrived) {
+      stopLocationTracking()
+      return
     }
-    navigator.geolocation.getCurrentPosition(async (pos) => {
-      const lat = pos.coords.latitude
-      const lng = pos.coords.longitude
-      const name = user.value.user_metadata?.full_name || user.value.email
 
-      const dist = getDistance(
-        lat, lng,
-        activeSchedule.value.lat,
-        activeSchedule.value.lng
-      )
-      const arrived = dist <= 50
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const lat = pos.coords.latitude
+        const lng = pos.coords.longitude
+        const name = currentUser.user_metadata?.full_name || currentUser.email
 
-      await supabase.from('attendees').update({
-        last_seen_lat: lat,
-        last_seen_lng: lng,
-        arrived,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('schedule_id', activeSchedule.value.id)
-      .eq('display_name', name)
+        const dist = getDistance(lat, lng, schedule.lat, schedule.lng)
+        const arrived = dist <= 50
 
-      await loadAttendees(activeSchedule.value.id)
-    })
+        console.log(`📍 Location update: ${lat},${lng} | dist: ${Math.round(dist)}m | arrived: ${arrived}`)
+
+        const { error } = await supabase
+          .from('attendees')
+          .update({
+            last_seen_lat: lat,
+            last_seen_lng: lng,
+            arrived,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('schedule_id', schedule.id)
+          .eq('display_name', name)
+
+        if (error) {
+          console.error('Location update failed:', error)
+          return
+        }
+
+        // Manually reload so OUR OWN update reflects immediately
+        await loadAttendees(schedule.id)
+      },
+      (err) => {
+        console.warn('Geolocation error:', err.message)
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 15000
+      }
+    )
   }
 
-  pushLocation()
-  locationInterval.value = setInterval(pushLocation, 30000)
+  pushLocation() // immediate
+  locationInterval.value = setInterval(pushLocation, 15000) // every 15s (more responsive)
 }
 
 function stopLocationTracking() {
@@ -543,20 +561,25 @@ let realtimeChannel
 
 onMounted(async () => {
   await loadSchedules()
+
   realtimeChannel = supabase
     .channel('kopenata:live')
-    .on('postgres_changes', {
-      event: '*', schema: 'public', table: 'attendees'
-    }, async (payload) => {
-      const sid = payload.new?.schedule_id || payload.old?.schedule_id
-      if (sid) await loadAttendees(sid)
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'attendees' },
+      async (payload) => {
+        const sid = payload.new?.schedule_id || payload.old?.schedule_id
+        if (sid) await loadAttendees(sid)
+      }
+    )
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'schedules' },
+      async () => { await loadSchedules() }
+    )
+    .subscribe((status) => {
+      console.log('Realtime status:', status)
     })
-    .on('postgres_changes', {
-      event: 'INSERT', schema: 'public', table: 'schedules'
-    }, async () => {
-      await loadSchedules()
-    })
-    .subscribe()
 })
 
 onUnmounted(() => {
