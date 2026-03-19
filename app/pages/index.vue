@@ -22,7 +22,6 @@
       <ClientOnly>
         <LMap
           ref="mapRef"
-          :key="mapKey"
           :zoom="15"
           :center="mapCenter"
           :use-global-leaflet="false"
@@ -35,19 +34,19 @@
           />
 
           <!-- Moving user pins (going, not arrived) -->
-          <template v-for="pin in movingPins" :key="pin.id">
-            <LMarker
-              :lat-lng="[pin.last_seen_lat ?? pin.lat, pin.last_seen_lng ?? pin.lng]"
-              :icon="makeEmojiIcon(pin.emoji, true, false)"
-            >
-              <LTooltip>
-                <div class="tooltip-inner">
-                  <strong>{{ pin.display_name }}</strong>
-                  <span>🚶 On the way...</span>
-                </div>
-              </LTooltip>
-            </LMarker>
-          </template>
+<template v-for="pin in movingPins" :key="pin.id">
+  <LMarker
+    :lat-lng="[pin.last_seen_lat ?? pin.lat, pin.last_seen_lng ?? pin.lng]"
+    :icon="makeEmojiIcon(pin.emoji, true, false)"
+  >
+    <LTooltip>
+      <div class="tooltip-inner">
+        <strong>{{ pin.display_name }}</strong>
+        <span>🚶 On the way...</span>
+      </div>
+    </LTooltip>
+  </LMarker>
+</template>
 
           <!-- Not going pins -->
           <!-- <template v-for="pin in notGoingPins" :key="pin.id">
@@ -65,10 +64,11 @@
           </template> -->
 
           <!-- Venue pin with arrived avatars -->
+
           <LMarker
             v-if="activeSchedule?.lat && activeSchedule?.lng"
             :lat-lng="[activeSchedule.lat, activeSchedule.lng]"
-            :icon="makeVenueIcon()"
+            :icon="venueIcon"
             @click="onVenueClick"
           />
 
@@ -234,7 +234,7 @@ const showSchedules = ref(false)
 const showRsvpModal = ref(false)
 const mapCenter = ref([10.6762, 122.9513])
 
-const mapKey = ref(0)
+
 
 
 const newTitle = ref('')
@@ -304,6 +304,8 @@ function makeEmojiIcon(emoji, going, arrived) {
     tooltipAnchor: [0, -40],
   })
 }
+
+const venueIcon = computed(() => makeVenueIcon())
 
 function makeVenueIcon() {
   const arrived = arrivedPins.value
@@ -379,8 +381,12 @@ async function loadAttendees(scheduleId) {
     .from('attendees')
     .select('*')
     .eq('schedule_id', scheduleId)
-  attendeeMap.value[scheduleId] = data || []
-  mapKey.value++ // ← force marker re-render
+  
+  // Use object spread to trigger Vue reactivity without remounting
+  attendeeMap.value = {
+    ...attendeeMap.value,
+    [scheduleId]: data || []
+  }
 }
 
 async function selectSchedule(s) {
